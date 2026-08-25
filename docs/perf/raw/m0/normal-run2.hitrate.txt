@@ -1,0 +1,20 @@
+# buffer pool 히트율 — 1 - (Innodb_buffer_pool_reads / Innodb_buffer_pool_read_requests)
+# 게이트: 측정 중 히트율 95% 미만이면 게시글 200만 하향 트리거 (마스터 §8 / 로드맵 §4.6)
+
+[런 전 · 서버 기동 이후 누적]
+  Innodb_buffer_pool_reads          = 50928
+  Innodb_buffer_pool_read_requests  = 864254
+  hit_rate                          = 0.9411
+
+[런 후 · 서버 기동 이후 누적]
+  Innodb_buffer_pool_reads          = 50949
+  Innodb_buffer_pool_read_requests  = 36966705
+  hit_rate                          = 0.9986
+
+[측정 구간 차분 — 95% 게이트의 판정 근거]
+  delta reads                       = 21
+  delta read_requests               = 36102451
+  hit_rate                          = 1.0000
+
+(SHOW GLOBAL STATUS는 서버 기동 이후 누적이다. 누적치에는 기동·복원 직후의 cold 읽기가
+ 섞여 있으므로, 측정 구간의 히트율은 차분으로 본다.)
