@@ -6,6 +6,8 @@ import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.config.http.SessionCreationPolicy;
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 
 /**
@@ -31,5 +33,15 @@ public class SecurityConfig {
 						.permitAll()
 						.anyRequest().authenticated());
 		return http.build();
+	}
+
+	/**
+	 * 비밀번호 해시. BCrypt 기본 강도(10)를 그대로 쓴다 — 강도를 올리면 해시 비용이 올라가고,
+	 * 그 비용은 로그인 응답 시간에 그대로 실린다(&sect;9.3의 "매 요청 로그인하면 BCrypt가 병목" 경고).
+	 * 그건 측정 설계에서 다룰 문제이고, 여기서는 표준 구현만 한다.
+	 */
+	@Bean
+	public PasswordEncoder passwordEncoder() {
+		return new BCryptPasswordEncoder();
 	}
 }

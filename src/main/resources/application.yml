@@ -23,19 +23,7 @@ spring:
       host: 127.0.0.1
       port: 6379
 
----
-# nodb 프로파일 — DB/Redis가 안 떠 있는 상태에서 부팅만 확인하는 스모크용.
-# DataSource/JPA/Hibernate/Flyway/Redis 자동구성을 빼서 연결 시도 자체를 막는다.
-# 실행: SPRING_PROFILES_ACTIVE=nodb ./gradlew bootRun
-spring:
-  config:
-    activate:
-      on-profile: nodb
-  autoconfigure:
-    exclude:
-      - org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration
-      - org.springframework.boot.autoconfigure.jdbc.DataSourceTransactionManagerAutoConfiguration
-      - org.springframework.boot.autoconfigure.orm.jpa.HibernateJpaAutoConfiguration
-      - org.springframework.boot.autoconfigure.flyway.FlywayAutoConfiguration
-      - org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration
-      - org.springframework.boot.autoconfigure.data.redis.RedisRepositoriesAutoConfiguration
+# nodb 프로파일(0.2)은 0.6에서 제거했다.
+# DataSource/JPA 자동구성을 빼는 방식이었는데, 가입 API가 UserRepository에 의존하는 빈을 들여오면서
+# "DB 없이 부팅"이 성립하지 않게 됐다(자동구성을 빼면 그 빈들이 만들어지지 못해 기동이 실패한다).
+# 부팅 확인은 Testcontainers 통합 테스트가 실제 MySQL/Redis 위에서 대신한다.
