@@ -35,3 +35,7 @@ out/
 
 ### VS Code ###
 .vscode/
+
+### 프로젝트 ###
+# MySQL 데이터 볼륨 스냅샷 아카이브 (수 GB). 재현은 make seed 로 한다 — 아카이브는 산출물이 아니다.
+docker/snapshots/

@@ -34,16 +34,21 @@ services:
       # named volume 으로 데이터를 컨테이너 밖에 둔다.
       # Phase 1에서 더미 데이터(사용자 10만/팔로우 300만/게시글 300만)를 매 측정마다 다시 만들 수는 없다.
       # 측정 전 스냅샷 복원(마스터 §9.3)이 이 볼륨을 덤프/복구하는 방식으로 이뤄진다.
+      #   make db-snapshot SNAP=m0 / make db-restore SNAP=m0
       - mysql-data:/var/lib/mysql
+      # innodb_buffer_pool_size=1G 와 slow query log 설정 (P1-05).
+      # 파일명을 zz- 로 시작해 이미지 기본 설정보다 뒤에 읽히게 한다 — 근거는 my.cnf 주석.
+      - ./docker/mysql/my.cnf:/etc/mysql/conf.d/zz-timeline.cnf:ro
     healthcheck:
       test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
       interval: 10s
       timeout: 5s
       retries: 10
       start_period: 30s
-    # innodb_buffer_pool_size 는 여기서 설정하지 않는다.
-    # Phase 1 인계 항목(마스터 §8 Phase 1 체크박스, 로드맵 §4.2) — 기본값 상태의 Pull 성능을 먼저 측정하고
-    # 그 다음에 1G로 올린다. Phase 0에서 미리 튜닝하면 M0/M1 비교의 기준선이 사라진다.
+    # Phase 0에서 인계한 innodb_buffer_pool_size 는 Phase 1(P1-05)에서 docker/mysql/my.cnf 로 들어갔다.
+    # 여기(command/environment)가 아니라 파일로 둔 이유는 slow query log 설정까지 같이 가야 하고,
+    # 설정 근거를 주석으로 남길 자리가 필요해서다. M0/M1 은 둘 다 이 설정 위에서 측정한다 —
+    # 두 지점의 차이는 posts 인덱스 유무 하나뿐이어야 개선을 인덱스에 귀속시킬 수 있다(마스터 §9.2).
 
   redis:
     image: redis:7

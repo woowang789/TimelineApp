@@ -74,3 +74,20 @@ tasks.withType<Test> {
 	// test 클래스패스에 dummy 출력물이 올라가 있으므로 컴파일 선행을 보장한다 (0.13 선반영).
 	dependsOn(tasks.named("compileDummyJava"))
 }
+
+// 더미 데이터 시드 (P1-01~P1-05). 사용법은 SeedMain의 클래스 주석 참고.
+//   ./gradlew seed                              # 전체 · 풀 스케일
+//   ./gradlew seed --args="all --scale=smoke"   # 축소 스케일
+tasks.register<JavaExec>("seed") {
+	group = "datagen"
+	description = "더미 데이터 적재 (users → follows → posts → counts → cohorts)"
+	mainClass = "com.timeline.datagen.SeedMain"
+	// main 산출물이 아니라 dummy 소스셋으로 실행한다 — 백데이팅 팩토리가 거기에만 있다(마스터 §4.2).
+	classpath = sourceSets["dummy"].runtimeClasspath
+	// k6/data/cohorts.json 을 저장소 기준 경로로 쓰기 위해 작업 디렉토리를 고정한다.
+	workingDir = rootDir
+	// 슬롯 풀(300만) + 배정 결과가 힙에 올라간다. 실측 200MB 남짓이라 1G면 넉넉하다.
+	maxHeapSize = "1g"
+	// 진행률 로그가 파이프로 나갈 때 뭉치지 않게 한다 (야간 실행 시 tee 로 받는다).
+	systemProperty("stdout.encoding", "UTF-8")
+}
