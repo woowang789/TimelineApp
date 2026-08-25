@@ -26,11 +26,14 @@
 --   MySQL 8.0 은 진짜 내림차순 인덱스를 지원한다(5.7 까지는 파싱만 하고 무시했다).
 --   ORDER BY 방향과 인덱스 방향을 문자 그대로 일치시켜, 역방향 스캔에 기대지 않게 한다.
 --
--- fk_posts_author 와의 관계
---   V1 의 FK 제약 때문에 InnoDB 가 만든 author_id 단일 컬럼 인덱스 `fk_posts_author` 가 이미 있다.
---   이 인덱스는 그대로 둔다 — 제거하면 FK 제약이 인덱스를 잃는다.
---   M0 의 EXPLAIN 이 p 를 fk_posts_author ref 로 읽은 것이 그 인덱스의 존재 증거이며,
---   "인덱스 없음"이란 어디까지나 **조회용 복합 인덱스의 부재**를 뜻했다.
+-- fk_posts_author 와의 관계 (실측으로 확인된 동작)
+--   V1 의 FK 제약 때문에 InnoDB 가 만든 author_id 단일 컬럼 인덱스 `fk_posts_author` 가 있었다
+--   (M0 의 EXPLAIN 이 p 를 fk_posts_author ref 로 읽은 것이 그 존재 증거).
+--   이 마이그레이션이 같은 선행 컬럼(author_id)의 인덱스를 만들면 InnoDB 는
+--   **자동 생성 인덱스 fk_posts_author 를 조용히 제거하고 FK 를 이 인덱스에 재바인딩한다** —
+--   적용 후 SHOW INDEX 에 fk_posts_author 가 없는 것이 실측 결과다.
+--   따라서 이 인덱스를 이후에 지우려면 FK 가 옮겨 탈 다른 author_id 선행 인덱스가
+--   먼저 존재해야 한다(V3 의 적용 순서가 그 제약에서 나왔다 — ERROR 1553 실측).
 --
 -- 적용 범위
 --   이 마이그레이션은 후보 A 를 재는 데 쓴다. 후보 B 는 V3 이고,

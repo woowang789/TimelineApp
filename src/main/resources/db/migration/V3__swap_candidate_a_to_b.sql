@@ -28,15 +28,17 @@
 --   추정만 믿었다면 "필터가 이미 5%까지 줄여 주니 is_deleted 는 인덱스에 넣을 필요 없다"는
 --   잘못된 결론에 도달했을 것이다. 그래서 A/B 를 둘 다 실제로 적용해 재는 것이다.
 --
--- DROP INDEX 가 FK 제약을 깨지 않는 이유
---   V1 의 FK 제약 때문에 InnoDB 가 만든 author_id 단일 컬럼 인덱스 `fk_posts_author` 가
---   별도로 남아 있다(V2 를 적용해도 이 인덱스는 사라지지 않는다).
---   따라서 idx_posts_author_id_desc 를 지워도 fk_posts_author 가 FK 의 인덱스 요건을 계속 충족한다.
---   FK 를 지탱하는 유일한 인덱스를 지우려 했다면 MySQL 이 거부했을 것이다(ERROR 1553).
---
--- ※ 이 마이그레이션의 적용 순서
---   DROP 을 먼저 하고 CREATE 를 한다. 두 인덱스를 동시에 들고 있으면
---   옵티마이저가 어느 쪽을 골랐는지에 따라 측정이 오염되어 A/B 비교가 성립하지 않는다.
+-- ※ 적용 순서 — CREATE 를 먼저 하고 DROP 을 한다 (실측으로 배운 순서)
+--   최초 작성은 DROP → CREATE 였고, 근거는 "FK 제약이 만든 fk_posts_author 인덱스가
+--   별도로 남아 있으므로 A 를 지워도 안전하다"였다. **이 가정은 실측에서 반증됐다** —
+--   V2 가 (author_id, ...) 인덱스를 만드는 순간 InnoDB 는 같은 선행 컬럼의 자동 생성
+--   인덱스 fk_posts_author 를 조용히 제거하고 FK 를 후보 A 에 재바인딩한다.
+--   (후보 A 적용 상태의 SHOW INDEX 에 fk_posts_author 가 없는 것이 그 증거다.)
+--   그 상태에서 A 를 먼저 지우면 FK 를 지탱하는 유일한 인덱스를 지우는 것이 되어
+--   ERROR 1553 으로 마이그레이션이 실패한다 — 실제로 한 번 실패했다.
+--   CREATE(B) → DROP(A) 순서면 B(author_id 선행)가 FK 의 새 지지 인덱스가 되어 DROP 이 허용된다.
+--   두 인덱스가 공존하는 것은 이 마이그레이션 안의 한 순간뿐이고, 측정은 마이그레이션이
+--   끝난 뒤에 시작하므로 옵티마이저 선택 오염 문제는 없다.
 --
 -- ※ 채택 확정 이후 (V4)
 --   P1-13 의 실측 비교로 채택안이 정해지면, 그 결과에 맞춰 **V4 를 별도로 작성한다.**
@@ -47,6 +49,6 @@
 --   V4 의 작성과 snap-m1 생성은 측정 결과가 나온 뒤의 작업이다.
 -- =====================================================================================
 
-DROP INDEX idx_posts_author_id_desc ON posts;
-
 CREATE INDEX idx_posts_author_deleted_id_desc ON posts (author_id, is_deleted, id DESC);
+
+DROP INDEX idx_posts_author_id_desc ON posts;
