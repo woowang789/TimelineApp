@@ -29,6 +29,16 @@ public enum ErrorCode {
 	SELF_FOLLOW_FORBIDDEN(HttpStatus.BAD_REQUEST, "자기 자신은 팔로우할 수 없습니다."),
 	DUPLICATE_FOLLOW(HttpStatus.CONFLICT, "이미 팔로우한 사용자입니다."),
 	FOLLOW_NOT_FOUND(HttpStatus.NOT_FOUND, "팔로우하지 않은 사용자입니다."),
+	/** 없는 게시글과 soft delete된 게시글을 한 코드로 합친다 — 삭제되었다는 사실 자체를 알려 줄 이유가 없다. */
+	POST_NOT_FOUND(HttpStatus.NOT_FOUND, "게시글을 찾을 수 없습니다."),
+	/**
+	 * 남의 게시글을 삭제하려는 요청. 404로 뭉개지 않고 403으로 구분한다 —
+	 * 게시글은 누구나 조회할 수 있으므로 존재를 감출 이유가 없고, 클라이언트는 재시도해도
+	 * 소용없다는 것을 알아야 한다.
+	 */
+	NOT_POST_AUTHOR(HttpStatus.FORBIDDEN, "본인이 작성한 게시글만 삭제할 수 있습니다."),
+	DUPLICATE_LIKE(HttpStatus.CONFLICT, "이미 좋아요한 게시글입니다."),
+	LIKE_NOT_FOUND(HttpStatus.NOT_FOUND, "좋아요하지 않은 게시글입니다."),
 	INTERNAL_ERROR(HttpStatus.INTERNAL_SERVER_ERROR, "서버 내부 오류가 발생했습니다.");
 
 	private final HttpStatus status;

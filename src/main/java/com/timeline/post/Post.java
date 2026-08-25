@@ -3,8 +3,12 @@ package com.timeline.post;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
+import jakarta.persistence.PostLoad;
+import jakarta.persistence.PostPersist;
 import jakarta.persistence.Table;
+import jakarta.persistence.Transient;
 import java.time.LocalDateTime;
+import org.springframework.data.domain.Persistable;
 
 /**
  * 게시글 엔티티.
@@ -16,14 +20,15 @@ import java.time.LocalDateTime;
  * 생성기는 작업 0.5 에서 {@code common.snowflake} 에 구현한다.
  *
  * <p>다만 대가가 하나 있다 — id 가 미리 채워진 엔티티는 Hibernate 가 신규인지 기존인지 알 수 없어
- * {@code save()} 시 SELECT 를 한 번 먼저 던진다. 저장 경로를 만들 때(0.11) 다룰 문제로 남겨 둔다.
+ * {@code save()} 시 SELECT 를 한 번 먼저 던진다. 0.11 에서 {@link Persistable} 구현으로 갚았다 —
+ * 아래 {@link #isNew()} 주석이 그 선택의 이유다.
  *
  * <p><strong>User 를 참조하지 않고 {@code authorId} 를 {@code Long} 으로 직접 들고 있다</strong> —
  * 루트 {@code package-info} 의 경계 규칙 1(도메인 패키지 간 엔티티 직접 참조 금지).
  */
 @Entity
 @Table(name = "posts")
-public class Post {
+public class Post implements Persistable<Long> {
 
 	/** Snowflake ID. 애플리케이션이 대입한다 — DB AUTO_INCREMENT 가 아니다. */
 	@Id
@@ -45,6 +50,13 @@ public class Post {
 
 	@Column(name = "created_at", nullable = false)
 	private LocalDateTime createdAt;
+
+	/**
+	 * 신규 여부 표시. 컬럼이 아니라 메모리에만 있는 값이다 — 아래 {@link #isNew()} 가 이 값을 읽는다.
+	 * 새로 만든 객체는 {@code true} 로 시작하고, 저장되거나 DB 에서 읽히는 순간 {@code false} 가 된다.
+	 */
+	@Transient
+	private boolean isNew = true;
 
 	/** JPA 전용. 직접 호출하지 말 것 — 생성은 {@link #create} 로만 한다. */
 	protected Post() {
@@ -77,6 +89,40 @@ public class Post {
 		this.isDeleted = true;
 	}
 
+	/**
+	 * 이 엔티티가 신규인지 알려준다 — {@code JpaRepository.save()} 가 {@code persist} 와 {@code merge}
+	 * 중 무엇을 부를지 정하는 값이다.
+	 *
+	 * <p><strong>왜 필요한가.</strong> Spring Data 의 기본 판정은 "id 가 null 이면 신규"인데, 이 엔티티는
+	 * Snowflake id 를 애플리케이션이 미리 채워 넣는다(위 클래스 주석). 그래서 갓 만든 게시글도 기존 행으로
+	 * 오인되어 {@code merge} 로 흐르고, {@code merge} 는 병합 대상을 찾으려 <strong>INSERT 앞에 SELECT 를
+	 * 한 번 더 던진다.</strong> 게시글 작성은 쓰기 경로의 전부이고 Phase 2a 에서는 여기에 fan-out 까지
+	 * 얹히므로, 작성 1건마다 붙는 불필요한 왕복을 남겨 둘 이유가 없다.
+	 *
+	 * <p><strong>왜 이 방법인가.</strong> 대안은 저장 지점에서 {@code EntityManager.persist()} 를 직접
+	 * 부르는 것인데, 그러면 "이 엔티티는 persist 여야 한다"는 사실이 <em>부르는 쪽</em>에 흩어진다 —
+	 * 저장 경로가 늘어날 때마다(Phase 2a·더미 데이터) 같은 주의를 반복해야 한다.
+	 * {@link Persistable} 은 그 판단을 엔티티 자신에게 두므로 호출자는 평범하게 {@code save()} 만 쓰면 된다.
+	 * ({@code @Version} 컬럼을 추가하는 방법도 있으나 스키마 변경이고, 이 프로젝트에 낙관적 락은 필요 없다.)
+	 */
+	@Override
+	public boolean isNew() {
+		return isNew;
+	}
+
+	/**
+	 * 저장 직후·조회 직후에 신규 표시를 내린다.
+	 *
+	 * <p>{@code @PostLoad} 가 없으면 DB 에서 읽어 온 게시글도 {@code isNew = true} 인 채로 남아
+	 * (필드 초기값이 그렇다) 이후의 {@code save()} 가 {@code persist} 를 시도하게 된다.
+	 */
+	@PostPersist
+	@PostLoad
+	private void markNotNew() {
+		this.isNew = false;
+	}
+
+	@Override
 	public Long getId() {
 		return id;
 	}
