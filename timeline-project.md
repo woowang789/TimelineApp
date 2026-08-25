@@ -1432,3 +1432,13 @@ make bench-m3
 | V1 인덱스 범위 | **posts 조회용 보조 인덱스 제외** | 인덱스는 M0 분석의 산출물이다 (§4.1 주석, §9.2) |
 | 더미 인플루언서 승격 | **일괄 배치, `influencer_since`는 더미 게시글 시간창 이전으로 백데이팅** | 승격 시각을 현재로 잡으면 기존 글 전부가 머지 범위 밖이라 M4의 머지 비용이 공동화된다. 캐시 중복은 머지 dedup(§7.2)으로 흡수 |
 | k6 saturation 사다리 | **측정 지점별 하향 조정 허용 (구조 동일)** | M0/M1은 낮은 사다리가 아니면 전 구간 dropped로 무효 (§9.1) |
+
+*아래는 Phase 0 구현 과정에서 추가 확정된 결정이다.*
+
+| 항목 | 확정 | 이유 |
+|---|---|---|
+| Spring Boot 버전 | **3.5.16** | start.spring.io가 4.x만 생성(3.x 거부)해 스켈레톤만 받고 3.x 최신 안정으로 재작성. 프로젝트 규칙(Boot 3.x 고정)이 우선 |
+| posts의 FK 부산물 인덱스 | **FK 유지 — `fk_posts_author`(author_id 단일) 허용** | InnoDB는 FK 자식 컬럼 인덱스를 강제한다(제거 시 ERROR 1553). 따라서 M0의 "인덱스 없음"은 "**Pull 조회용 복합 인덱스 없음**"을 뜻하며, M1의 개선 귀속은 "복합 인덱스의 filesort 제거 효과"로 서술한다 (V1 주석에 해석 지침) |
+| Redis persistence | **off (`--save ""`)** | 캐시 전용 — 키가 없으면 Pull 폴백으로 복구되는 설계(§5-7)라 불필요하고, fork 기반 스냅샷은 측정 중 latency spike로 수치를 오염시킨다 |
+| DATETIME 정밀도 | **전 컬럼 DATETIME(6)** | Hibernate 6 매핑 기본(datetime(6))과 문자 그대로 일치. 정밀도 0은 반올림으로 `created_at`이 최대 +0.5초 밀려 Snowflake id/시간 순서 대조(§4.2)에 노이즈가 된다 |
+| Snowflake 시계 역행 | **5ms 이하 대기 흡수 / 초과 시 즉시 실패(IllegalStateException)** | NTP slew는 스핀 대기로 흡수. step 보정을 대기로 버티면 락을 쥔 채 수 분 멈춘다. lastTimestamp 재사용 발급은 "ID = 시각" 전제를 소리 없이 깨므로 제외 |
