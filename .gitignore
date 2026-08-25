@@ -39,3 +39,7 @@ out/
 ### 프로젝트 ###
 # MySQL 데이터 볼륨 스냅샷 아카이브 (수 GB). 재현은 make seed 로 한다 — 아카이브는 산출물이 아니다.
 docker/snapshots/
+
+# 측정 원시 결과 중 대용량 바이너리는 커밋하지 않는다 (§9.6 커밋 대상은 k6 JSON summary와 텍스트 로그)
+docs/perf/raw/**/*.jfr
+docs/perf/raw/**/*.app.log

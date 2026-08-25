@@ -225,11 +225,12 @@ if [ ! -f "$JAR" ]; then
 fi
 
 log "3b) 앱 기동 (호스트 · -Xmx1g · JFR → $JFR_FILE)"
-# duration=0 = 무제한 녹화, dumponexit=true = 종료 시 파일로 flush.
+# duration 미지정 = 무제한 녹화 (duration=0은 JDK 21에서 "최소 1초" 오류로 기동 자체가 실패한다 — 실측),
+# dumponexit=true = 종료 시 파일로 flush.
 # settings는 기본(default) 프로파일이다 — 오버헤드가 낮아 측정 자체를 덜 흔든다.
 # 더 촘촘한 플레임그래프가 필요하면 settings=profile로 바꾸되, 그 런은 조건이 달라졌음을 리포트에 적는다.
 java -Xmx1g \
-	-XX:StartFlightRecording=duration=0,dumponexit=true,filename="$JFR_FILE" \
+	-XX:StartFlightRecording=dumponexit=true,filename="$JFR_FILE" \
 	-jar "$JAR" >"$APP_LOG" 2>&1 &
 APP_PID=$!
 
@@ -279,6 +280,47 @@ log "4) cold 참고치 기록 → $META_TXT"
 	echo "docker compose    : $(docker compose version --short 2>/dev/null)"
 	echo "host              : $(uname -sm) / $(sysctl -n hw.ncpu 2>/dev/null || echo '?')코어"
 } >"$META_TXT"
+
+# ── 4b. cold 참고치 + 워밍업 (§4.5 — "복원 직후 1회(cold 참고치) + 워밍업 후 본 측정(warm)") ──
+# M0 heavy 1차 본 측정에서 이 단계 없이 사다리를 시작했더니, cold 쿼리(10~30초)가 커넥션 10개를
+# 점유해 s0(1 RPS)부터 커넥션 대기 30초 타임아웃이 연쇄됐다 — 그 런의 p50은 쿼리 비용이 아니라
+# HikariCP 타임아웃 값이었다. open model은 서버가 밀려도 주입을 멈추지 않으므로 한 번 밀리면
+# 회복이 없다. warm 본 측정이려면 buffer pool과 JIT를 명시적으로 데우고 시작해야 한다.
+log "4b) cold 참고치 → 워밍업"
+COHORT_PROBE_USER="$(python3 -c "
+import json
+print(json.load(open('k6/data/cohorts.json'))['$COHORT'][0]['username'])")"
+PROBE_TOKEN="$(curl -s -X POST "$BASE_URL/api/v1/auth/login" -H 'Content-Type: application/json' \
+	-d "{\"username\":\"$COHORT_PROBE_USER\",\"password\":\"password123\"}" \
+	| python3 -c 'import json,sys; print(json.load(sys.stdin)["accessToken"])')"
+
+COLD_TIMES=""
+for i in 1 2 3; do
+	T="$(curl -s -o /dev/null -w '%{time_total}' "$BASE_URL/api/v1/timeline" -H "Authorization: Bearer $PROBE_TOKEN")"
+	COLD_TIMES="$COLD_TIMES ${T}s"
+done
+log "   cold 참고치($COHORT 대표 1명 3회):$COLD_TIMES"
+
+# buffer pool 워밍 — 풀스캔으로 posts 데이터/인덱스 페이지와 follows를 통째로 올린다.
+# 코호트 전원을 API로 순회하는 워밍(실트래픽 형태)은 cold 쿼리 1,000개 = 수십 분이라 비현실적이고,
+# 순차 풀스캔은 같은 페이지 집합을 수십 초에 올린다. 워밍 방법 자체도 조건이므로 meta에 기록한다.
+WARMUP_STARTED="$(date '+%H:%M:%S')"
+docker compose "${COMPOSE_FILES[@]}" exec -T -e MYSQL_PWD=timeline mysql \
+	mysql -utimeline -N -B timeline -e "
+	SELECT COUNT(*), AVG(like_count) FROM posts;
+	SELECT COUNT(*) FROM posts FORCE INDEX(fk_posts_author) WHERE author_id > 0;
+	SELECT COUNT(*) FROM follows;" >/dev/null
+# JVM/JIT·커넥션 풀 워밍 — 코호트 대표 요청을 직렬로 소량(데이터는 이미 위에서 데워져 빠르다).
+for i in $(seq 1 30); do
+	curl -s -o /dev/null "$BASE_URL/api/v1/timeline" -H "Authorization: Bearer $PROBE_TOKEN"
+done
+WARM_T="$(curl -s -o /dev/null -w '%{time_total}' "$BASE_URL/api/v1/timeline" -H "Authorization: Bearer $PROBE_TOKEN")"
+log "   워밍업 완료 ($WARMUP_STARTED → $(date '+%H:%M:%S')) · warm 단건 ${WARM_T}s"
+{
+	echo "cold 참고치       :$COLD_TIMES  ($COHORT 대표 $COHORT_PROBE_USER 3회)"
+	echo "워밍업            : posts 풀스캔 + fk_posts_author 인덱스 스캔 + follows 풀스캔 + API 30회"
+	echo "warm 단건         : ${WARM_T}s (워밍업 직후 동일 사용자)"
+} >>"$META_TXT"
 
 # ── buffer pool 상태 읽기 ────────────────────────────────────────────────────────
 mysql_bp_status() {

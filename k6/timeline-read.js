@@ -22,6 +22,7 @@
  * (RATES/DURATION을 늘려 런이 25분을 넘기게 만들면 이 전제가 깨진다.)
  */
 import http from 'k6/http';
+import exec from 'k6/execution';
 import { check, fail } from 'k6';
 
 // setup()의 로그인 요청이 섞이지 않은 타임라인 전용 하위 메트릭 이름.
@@ -102,6 +103,14 @@ export const options = {
 		//   slo        → M0/M1에서 1,000 RPS 미성립이 예상되고, "주입 불가"라는 사실 자체가 결과다.
 		//                이 런은 폐기 대상이 아니라 기록 대상이다(로드맵 §4.4 표).
 		dropped_iterations: ['count==0'],
+
+		// ── 스테이지별 분해 (M0 heavy 본 측정 1차에서 발견한 문제의 해법) ──────────
+		// 사다리 후반이 지속 상한을 넘으면 대기열이 무한 성장해 60초(k6 타임아웃) 표본이
+		// 집계 p50/p99를 지배한다 — 그 집계치로는 "포화점이 어디인가"에 답할 수 없다.
+		// 요청마다 현재 스테이지 번호를 태그로 달고(아래 default()), threshold를 걸어
+		// 하위 메트릭이 summary JSON에 실리게 한다 → 스테이지(=주입 RPS)별 p50/p99가
+		// 별도 시계열 출력 없이 raw summary만으로 복원된다.
+		...stageThresholds(),
 	},
 	// setup()에서 코호트 전원(최대 2,000명) 로그인한다. BCrypt가 1건당 수십~수백 ms라 넉넉히 잡는다.
 	setupTimeout: '300s',
@@ -181,7 +190,10 @@ export default function (tokens) {
 
 	const res = http.get(`${BASE_URL}/api/v1/timeline`, {
 		headers: { Authorization: `Bearer ${token}` },
-		tags: { endpoint: 'timeline' },
+		// stage 태그: iteration이 **시작된** 시각이 속한 사다리 스테이지 번호(0부터).
+		// 주의 — 대기열이 긴 구간에서는 s2에 시작한 요청이 s3에 끝나기도 한다.
+		// "그 주입량에서 시작한 요청이 겪은 지연"이 포화점 분석에 맞는 귀속이다.
+		tags: { endpoint: 'timeline', stage: currentStage() },
 	});
 
 	// 실패율 자체는 http_req_failed가 잡는다. 여기서는 "200인데 내용이 비정상"을 걸러낸다 —
@@ -253,6 +265,29 @@ function buildScenarios() {
 		};
 	}
 	throw new Error(`SCENARIO는 saturation 또는 slo여야 한다 (받은 값: '${SCENARIO}')`);
+}
+
+/** saturation일 때만 스테이지별 하위 메트릭 threshold를 만든다 (slo는 스테이지 개념이 없다). */
+function stageThresholds() {
+	if (SCENARIO !== 'saturation') {
+		return {};
+	}
+	const t = {};
+	for (let i = 0; i < RATES.length; i++) {
+		// 기준값은 상위 threshold와 같은 p(99)<200 — M0/M1에서 실패가 예상되는 기록용이다.
+		t[`http_req_duration{endpoint:timeline,stage:s${i}}`] = ['p(99)<200'];
+	}
+	return t;
+}
+
+/** 시나리오 시작 이후 경과 시간으로 현재 사다리 스테이지 번호를 계산한다 (단계 길이 1m 고정). */
+function currentStage() {
+	if (SCENARIO !== 'saturation') {
+		return 'none';
+	}
+	const elapsedMs = Date.now() - exec.scenario.startTime;
+	const idx = Math.min(Math.floor(elapsedMs / 60000), RATES.length - 1);
+	return `s${idx}`;
 }
 
 function parseRates(raw, fallback) {
@@ -336,6 +371,17 @@ function renderSummary(data, meta) {
 	lines.push(`  max            : ${fmt(metricValue(data, TIMELINE_DURATION, 'max'))} ms`);
 	lines.push(`  실패율         : ${fmt((metricValue(data, TIMELINE_FAILED, 'rate') || 0) * 100, 3)} %`);
 	lines.push(`  check 성공률   : ${fmt((metricValue(data, 'checks', 'rate') || 0) * 100, 3)} %`);
+	if (meta.scenario === 'saturation') {
+		lines.push('');
+		lines.push('  ── 스테이지별 (시작 시각 귀속 · 포화점 판독용) ──');
+		for (let i = 0; i < RATES.length; i++) {
+			const m = `http_req_duration{endpoint:timeline,stage:s${i}}`;
+			lines.push(`  s${i} ${String(RATES[i]).padStart(4)} RPS : ` +
+				`p50 ${fmt(metricValue(data, m, 'med'), 0)} ms · ` +
+				`p99 ${fmt(metricValue(data, m, 'p(99)'), 0)} ms · ` +
+				`max ${fmt(metricValue(data, m, 'max'), 0)} ms`);
+		}
+	}
 	lines.push('');
 	// 참고치. setup()의 로그인 요청이 포함되어 있어 지연 지표로 인용하면 안 된다.
 	lines.push('  ── 전체 HTTP (setup 로그인 포함 · 참고) ──');
