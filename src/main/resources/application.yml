@@ -1,0 +1,41 @@
+spring:
+  application:
+    name: timeline
+
+  # 애플리케이션은 컨테이너에 넣지 않고 호스트에서 실행한다 → DB/Redis는 127.0.0.1로 붙는다.
+  datasource:
+    url: jdbc:mysql://127.0.0.1:3306/timeline
+    username: timeline
+    password: timeline
+
+  jpa:
+    hibernate:
+      # 스키마의 유일한 관리자는 Flyway다. Hibernate는 검증만 한다.
+      ddl-auto: validate
+    # OSIV를 끈다 — 커넥션을 뷰 렌더링까지 붙들지 않는다(부하 측정의 전제).
+    open-in-view: false
+
+  flyway:
+    enabled: true
+
+  data:
+    redis:
+      host: 127.0.0.1
+      port: 6379
+
+---
+# nodb 프로파일 — DB/Redis가 안 떠 있는 상태에서 부팅만 확인하는 스모크용.
+# DataSource/JPA/Hibernate/Flyway/Redis 자동구성을 빼서 연결 시도 자체를 막는다.
+# 실행: SPRING_PROFILES_ACTIVE=nodb ./gradlew bootRun
+spring:
+  config:
+    activate:
+      on-profile: nodb
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration
+      - org.springframework.boot.autoconfigure.jdbc.DataSourceTransactionManagerAutoConfiguration
+      - org.springframework.boot.autoconfigure.orm.jpa.HibernateJpaAutoConfiguration
+      - org.springframework.boot.autoconfigure.flyway.FlywayAutoConfiguration
+      - org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration
+      - org.springframework.boot.autoconfigure.data.redis.RedisRepositoriesAutoConfiguration
