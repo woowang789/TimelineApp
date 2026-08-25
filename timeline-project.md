@@ -1442,3 +1442,7 @@ make bench-m3
 | Redis persistence | **off (`--save ""`)** | 캐시 전용 — 키가 없으면 Pull 폴백으로 복구되는 설계(§5-7)라 불필요하고, fork 기반 스냅샷은 측정 중 latency spike로 수치를 오염시킨다 |
 | DATETIME 정밀도 | **전 컬럼 DATETIME(6)** | Hibernate 6 매핑 기본(datetime(6))과 문자 그대로 일치. 정밀도 0은 반올림으로 `created_at`이 최대 +0.5초 밀려 Snowflake id/시간 순서 대조(§4.2)에 노이즈가 된다 |
 | Snowflake 시계 역행 | **5ms 이하 대기 흡수 / 초과 시 즉시 실패(IllegalStateException)** | NTP slew는 스핀 대기로 흡수. step 보정을 대기로 버티면 락을 쥔 채 수 분 멈춘다. lastTimestamp 재사용 발급은 "ID = 시각" 전제를 소리 없이 깨므로 제외 |
+| JWT 라이브러리 | **jjwt 0.12.x (api / impl / jackson 3분할)** | 컴파일 의존을 `jjwt-api`에만 걸면 애플리케이션 코드가 구현 패키지를 참조할 수 없다. Spring Security OAuth2 리소스 서버(Nimbus)는 인가 서버·JWK를 전제하는 스택이라 자체 발급 한 곳뿐인 이 구성에는 과하다 |
+| 인증 principal | **userId(`Long`) + `@AuthenticationPrincipal Long`** | 토큰의 sub가 곧 userId다. `UserDetails`를 끼우면 요청마다 사용자 조회가 붙는데, 조회 98%(§9.1) 부하에서 그건 인증이 아니라 부하다. 커스텀 리졸버도 불필요 |
+| 로그인 실패 응답 | **401 단일 코드 `LOGIN_FAILED`** — 사용자 부재/비밀번호 불일치 미구분 | 구분해서 응답하면 로그인 API가 username 존재 여부 확인 도구가 된다. 통합 테스트가 두 응답의 본문 동일성까지 검사한다 |
+| 토큰 `jti` 클레임 | **UUID 부여** | `iat`·`exp`가 초 단위라 같은 초의 재로그인이 바이트 단위로 동일한 토큰을 낸다. 그러면 "재로그인이 이전 Refresh를 무효화한다"(§5)가 그 순간만 조용히 성립하지 않는다 |

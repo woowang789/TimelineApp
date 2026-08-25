@@ -2,6 +2,7 @@ package com.timeline.user;
 
 import com.timeline.common.error.BusinessException;
 import com.timeline.common.error.ErrorCode;
+import java.util.Optional;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 
@@ -41,5 +42,14 @@ public class UserService {
 			// 그 경우도 사용자 입장에서는 같은 상황이므로 같은 409로 수렴시킨다.
 			throw new BusinessException(ErrorCode.DUPLICATE_USERNAME, e);
 		}
+	}
+
+	/**
+	 * 로그인 검증에 쓸 자격 정보를 찾는다. 없으면 빈 값 —
+	 * "없는 사용자"와 "비밀번호 불일치"를 같은 응답으로 합치는 것은 호출자(auth)의 몫이다.
+	 */
+	public Optional<UserCredentials> findCredentialsByUsername(String username) {
+		return userRepository.findByUsername(username)
+				.map(user -> new UserCredentials(user.getId(), user.getPassword()));
 	}
 }

@@ -23,6 +23,15 @@ spring:
       host: 127.0.0.1
       port: 6379
 
+# JWT (0.7 · 마스터 부록 B — Access 30분 / Refresh 14일).
+jwt:
+  # 로컬 전용 시크릿이다. 저장소에 평문으로 두는 이유는 이 앱이 로컬에서만 뜨고,
+  # 운영 배포 대상이 아니기 때문이다(배포한다면 환경변수 JWT_SECRET으로 주입한다).
+  # HS256은 키가 최소 256비트여야 하므로 Base64 디코딩 시 32바이트 이상이어야 한다 — 여기서는 48바이트.
+  secret: 4MaspBRERr/o0Jx0Viv1BAbp58smx9NdhvdaIrR3765yJeHPo5aUwlE86II4Tz5V
+  access-token-ttl: 30m
+  refresh-token-ttl: 14d
+
 # bench 프로파일의 Prometheus가 호스트에서 실행 중인 앱의 /actuator/prometheus를 스크레이프한다(로드맵 0.12).
 # 노출은 필요한 것만 연다 — env·beans·heapdump까지 열면 측정과 무관한 공격면만 늘어난다.
 management:

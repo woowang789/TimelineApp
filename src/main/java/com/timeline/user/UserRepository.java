@@ -1,5 +1,6 @@
 package com.timeline.user;
 
+import java.util.Optional;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 /**
@@ -11,4 +12,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 public interface UserRepository extends JpaRepository<User, Long> {
 
 	boolean existsByUsername(String username);
+
+	/** 로그인 검증용. username에 UNIQUE가 걸려 있어 인덱스 단건 조회다. */
+	Optional<User> findByUsername(String username);
 }

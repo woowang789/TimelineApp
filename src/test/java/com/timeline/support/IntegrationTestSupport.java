@@ -1,11 +1,19 @@
 package com.timeline.support;
 
+import com.timeline.auth.LoginResponse;
+import com.timeline.auth.SignupResponse;
 import java.sql.Statement;
 import java.util.List;
+import java.util.Map;
 import org.junit.jupiter.api.AfterEach;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.client.TestRestTemplate;
+import org.springframework.context.annotation.Import;
+import org.springframework.data.redis.connection.RedisConnection;
+import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
 import org.springframework.jdbc.core.ConnectionCallback;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
@@ -26,6 +34,7 @@ import org.testcontainers.containers.MySQLContainer;
  * 그래서 static 필드로 한 번만 띄우고 JVM 종료 시 Ryuk이 정리하게 둔다.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+@Import(ProtectedTestEndpoint.class)
 public abstract class IntegrationTestSupport {
 
 	private static final MySQLContainer<?> MYSQL = new MySQLContainer<>("mysql:8.0")
@@ -33,8 +42,8 @@ public abstract class IntegrationTestSupport {
 			.withUsername("timeline")
 			.withPassword("timeline");
 
-	// Redis를 지금 쓰는 경로는 없지만(refresh 토큰은 0.7) 컨테이너는 함께 띄운다 —
-	// 자동구성이 붙는 대상이 실제 서버여야 "부팅은 됐는데 Redis만 없는" 상태를 만들지 않는다.
+	// 0.7부터 Refresh Token이 여기 들어간다. 자동구성이 붙는 대상이 실제 서버여야
+	// "부팅은 됐는데 Redis만 없는" 상태를 만들지 않는다.
 	private static final GenericContainer<?> REDIS = new GenericContainer<>("redis:7")
 			.withExposedPorts(6379);
 
@@ -62,6 +71,38 @@ public abstract class IntegrationTestSupport {
 
 	@Autowired
 	protected JdbcTemplate jdbcTemplate;
+
+	@Autowired
+	protected StringRedisTemplate redisTemplate;
+
+	/**
+	 * 가입 + 로그인. 인증이 필요한 테스트의 준비 단계이고, 0.9~0.11의 모든 테스트가 이 자리에서 시작한다.
+	 *
+	 * <p>토큰을 얻는 경로를 로그인 API로 두는 이유는, 테스트가 {@code JwtProvider}로 토큰을 직접 만들면
+	 * "발급은 되는데 로그인이 깨진" 상태를 이 스위트가 못 잡기 때문이다.
+	 */
+	protected Tokens signupAndLogin(String username, String password) {
+		Long userId = restTemplate.postForEntity("/api/v1/auth/signup",
+				Map.of("username", username, "password", password, "nickname", username),
+				SignupResponse.class).getBody().id();
+
+		LoginResponse tokens = restTemplate.postForEntity("/api/v1/auth/login",
+				Map.of("username", username, "password", password),
+				LoginResponse.class).getBody();
+
+		return new Tokens(userId, tokens.accessToken(), tokens.refreshToken());
+	}
+
+	/** {@code Authorization: Bearer ...} 헤더 하나짜리 요청 엔티티. */
+	protected HttpEntity<Void> bearer(String token) {
+		HttpHeaders headers = new HttpHeaders();
+		headers.setBearerAuth(token);
+		return new HttpEntity<>(headers);
+	}
+
+	/** 가입·로그인 한 사용자의 식별자와 토큰 묶음. */
+	protected record Tokens(Long userId, String accessToken, String refreshToken) {
+	}
 
 	/**
 	 * 테스트 간 데이터 격리 — <strong>테이블 TRUNCATE 방식을 쓴다.</strong>
@@ -99,5 +140,19 @@ public abstract class IntegrationTestSupport {
 			}
 			return null;
 		});
+	}
+
+	/**
+	 * Redis 격리 — 키 공간을 통째로 비운다.
+	 *
+	 * <p>{@code refresh:{userId}} 키의 TTL이 14일이라 지우지 않으면 스위트가 끝날 때까지 남는다.
+	 * userId는 TRUNCATE로 1부터 다시 채번되므로, 남은 키는 다음 테스트가 만든 사용자에게
+	 * <strong>이전 테스트의 Refresh Token으로 붙는다</strong> — "재발급이 되네"가 통과해 버리는 종류의 오염이다.
+	 */
+	@AfterEach
+	void flushRedis() {
+		try (RedisConnection connection = redisTemplate.getRequiredConnectionFactory().getConnection()) {
+			connection.serverCommands().flushAll();
+		}
 	}
 }

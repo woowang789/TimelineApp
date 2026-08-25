@@ -50,6 +50,13 @@ dependencies {
 	// initializr가 제공하지 않아 직접 추가 (Spring Boot 3.5 대응 2.x 최신)
 	implementation("org.springdoc:springdoc-openapi-starter-webmvc-ui:2.9.0")
 
+	// JWT (0.7). api / impl / jackson 3분할이 jjwt의 배포 형태다 —
+	// 컴파일 의존은 api에만 걸고 구현체는 런타임에만 올린다. 그래야 애플리케이션 코드가
+	// io.jsonwebtoken.impl.* 를 실수로 직접 참조할 수 없다.
+	implementation("io.jsonwebtoken:jjwt-api:0.12.7")
+	runtimeOnly("io.jsonwebtoken:jjwt-impl:0.12.7")
+	runtimeOnly("io.jsonwebtoken:jjwt-jackson:0.12.7")
+
 	runtimeOnly("com.mysql:mysql-connector-j")
 	runtimeOnly("io.micrometer:micrometer-registry-prometheus")
 
