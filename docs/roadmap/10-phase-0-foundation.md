@@ -317,3 +317,29 @@ Phase 0 고유의 것만 적는다. 프로젝트 전역 리스크는 마스터 �
 
 **완료 조건 대조**: 마스터의 "기능은 다 되지만 데이터가 없고 성능 개념도 없는 상태"
 = 이 문서 C1~C7. 특히 C7이 "데이터 없음·성능 개념 없음"을 명시적으로 지킨다.
+
+---
+
+## 8. 마감 점검 결과 (0.15 · 2026-08-25)
+
+C1~C7 전수 실측 통과. 세부:
+
+| # | 결과 | 실측 근거 |
+|---|---|---|
+| C1 | ✅ | 통합 테스트 **58개** 전부 green (`./gradlew clean test` 46초, 콜드 컨테이너 포함). GitHub Actions 첫 run green |
+| C2 | ✅ | 빈 DB → Flyway V1 → `ddl-auto: validate` 부팅 성공 (0.4에서 엔티티가 DB에 없는 컬럼을 가리키게 하는 부정 실험까지 수행). `TimelineApplicationTests`가 §1 목록의 `SchemaValidationTest` 역할을 겸한다 |
+| C3 | ✅ | 3종 프로파일 전부 기동 실측 — dev(MySQL 2G/Redis 1.5G), bench(+Prometheus 0.4G·Grafana 0.3G, 타겟 UP), async(+Kafka 1.2G healthy, arm64 네이티브). `maxmemory`=1073741824, policy=allkeys-lru |
+| C4 | ✅ | bootJar에 `SnowflakeIdFactory` 부재 (`unzip -l` 실측) + CI 스텝 자동화 (동적 대조 + 이름 안전망, 주입 시뮬레이션으로 검출 확인) |
+| C5 | ✅ | `/v3/api-docs`에 §6 Phase 0 범위 12개 엔드포인트 노출 (auth 3 · users/follow 5 · posts/likes 4). `GET /timeline` 부재 = 정상 |
+| C6 | ✅ | push 트리거 워크플로 green run + README 뱃지 |
+| C7 | ✅ | 더미 데이터 생성 코드 없음(dummy 소스셋엔 `SnowflakeIdFactory`뿐) · posts 조회용 보조 인덱스 없음(`SHOW INDEX` 실측, FK 부산물 `fk_posts_author`만 — 부록 B 해석 지침) · Redis 캐시 조회 경로 없음(refresh 토큰만) · `PATCH /posts` 없음 |
+
+§1 통합 테스트 목록 10종 ↔ 실제 클래스 매핑: Signup(3)·Login(4)·Reissue(6)·Follow(9)·FollowList(6)·Post(8)·AuthorPosts(4)·Like(8)·SchemaValidation(=`TimelineApplicationTests` 1)·SnowflakeId(5) + 추가 `SecurityBoundaryIntegrationTest`(4).
+
+**0.13 기록** — 스위트 소요: 로컬 `clean test` 46초(콜드), warm 컨텍스트 재실행 시 ~20초. CI 전체 job 예산 15분 중 실측 수 분 내 완료. Phase 2b 동등성 검증이 얹혀도 5분 예산에 여유.
+
+**Phase 1 인계 사항** (본문 5절과 동일, 재확인):
+- `innodb_buffer_pool_size = 1G` 설정 (M0 측정 전 적용 — §8 Phase 1 체크박스)
+- posts 채택 인덱스는 P1-13 실측 비교로 최초 도입 (후보 2종, V1 주석)
+- dummy 소스셋에 더미 데이터 생성기 추가 (JDBC Batch, 노드ID 0~15 병렬) — CI의 C4 동적 대조가 자동 커버
+- `GET /timeline` Pull 구현 + k6 시나리오 (open model)

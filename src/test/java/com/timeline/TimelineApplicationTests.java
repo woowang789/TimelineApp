@@ -4,7 +4,7 @@ import com.timeline.support.IntegrationTestSupport;
 import org.junit.jupiter.api.Test;
 
 /**
- * 컨텍스트 로드 스모크 테스트.
+ * 컨텍스트 로드 스모크 테스트 — 로드맵 §1 통합 테스트 목록의 <strong>{@code SchemaValidationTest} 역할</strong>을 겸한다.
  *
  * <p><strong>0.6에서 {@code nodb} 프로파일을 걷어냈다.</strong> 그 프로파일은 DataSource·JPA 자동구성을
  * 빼서 "DB 없이 부팅되는지"를 봤는데, 가입 API가 들어오면서 UserRepository에 의존하는 빈이 생겼다 —
