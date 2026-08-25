@@ -19,6 +19,25 @@ repositories {
 	mavenCentral()
 }
 
+// 더미 데이터 생성 전용 소스셋 (마스터 §4.2 — 백데이팅 팩토리 격리).
+// bootJar는 main 소스셋만 패키징하므로 dummy 클래스는 배포 산출물에 물리적으로 부재한다.
+sourceSets {
+	create("dummy") {
+		java.srcDir("src/dummy/java")
+		compileClasspath += sourceSets.main.get().output + configurations.runtimeClasspath.get()
+		runtimeClasspath += output + compileClasspath
+	}
+}
+
+// 0.13 선반영: of()와 nextId()의 비트 배치 일치를 테스트하려면 dummy 출력물이 test 클래스패스에 있어야 한다.
+// bootJar는 main만 보므로 이 연결이 배포 산출물에 스며들지는 않는다.
+sourceSets {
+	test {
+		compileClasspath += sourceSets["dummy"].output
+		runtimeClasspath += sourceSets["dummy"].output
+	}
+}
+
 dependencies {
 	implementation("org.springframework.boot:spring-boot-starter-web")
 	implementation("org.springframework.boot:spring-boot-starter-data-jpa")
@@ -45,4 +64,6 @@ dependencies {
 
 tasks.withType<Test> {
 	useJUnitPlatform()
+	// test 클래스패스에 dummy 출력물이 올라가 있으므로 컴파일 선행을 보장한다 (0.13 선반영).
+	dependsOn(tasks.named("compileDummyJava"))
 }
