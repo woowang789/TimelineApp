@@ -1446,3 +1446,12 @@ make bench-m3
 | 인증 principal | **userId(`Long`) + `@AuthenticationPrincipal Long`** | 토큰의 sub가 곧 userId다. `UserDetails`를 끼우면 요청마다 사용자 조회가 붙는데, 조회 98%(§9.1) 부하에서 그건 인증이 아니라 부하다. 커스텀 리졸버도 불필요 |
 | 로그인 실패 응답 | **401 단일 코드 `LOGIN_FAILED`** — 사용자 부재/비밀번호 불일치 미구분 | 구분해서 응답하면 로그인 API가 username 존재 여부 확인 도구가 된다. 통합 테스트가 두 응답의 본문 동일성까지 검사한다 |
 | 토큰 `jti` 클레임 | **UUID 부여** | `iat`·`exp`가 초 단위라 같은 초의 재로그인이 바이트 단위로 동일한 토큰을 낸다. 그러면 "재로그인이 이전 Refresh를 무효화한다"(§5)가 그 순간만 조용히 성립하지 않는다 |
+
+*아래는 Phase 1 구현 과정에서 추가 확정된 결정이다.*
+
+| 항목 | 확정 | 이유 |
+|---|---|---|
+| `timeline` 패키지의 도메인 경계 | **읽기 전용 특례 — `posts`·`follows`를 native SQL로 직접 조회한다.** 단, `Post`/`Follow` 엔티티도 두 도메인의 Repository도 참조하지 않는다(JdbcTemplate 전용). 쓰기는 특례에서 제외 | §8 Phase 1이 규정한 Pull 쿼리가 `posts JOIN follows` **한 문장**이고 그 문장 자체가 M0/M1의 측정 대상이다. FollowService→PostService로 쪼개면 쿼리가 둘이 되어 재려던 대상이 사라진다. 대신 자바 타입 결합을 0으로 묶어, 경계가 import 목록으로 확인되게 한다 |
+| Pull 조회 구현 수단 | **`NamedParameterJdbcTemplate` + SQL 문자열 리터럴** (JPQL·QueryDSL·JPA native query 모두 제외) | 리포트의 `EXPLAIN ANALYZE` 대상과 서버가 보내는 SQL이 문자 그대로 같아야 분석이 코드에 대한 분석이 된다. JPQL은 방언이 SQL을 다시 쓰고, JPA native query는 `@Entity`에 묶인 리포지터리를 요구해 위 경계와 충돌한다. named parameter를 쓰는 것도 §8의 `:userId`/`:cursor` 표기를 그대로 살리기 위해서다 |
+| `GET /timeline`의 `size` | **기본 20 · 상한 20(초과는 절삭, 400 아님)** | 조회 SQL의 `LIMIT 25`는 "25개 조회 → 삭제 필터 → 20개 반환"(§5-2)에서 온 고정 상수라 페이지 크기를 따라 커지지 않는다. 21 이상을 허용하면 `hasNext` 판정 여유가 4건 이하로 줄고, Phase 2a에서 그 여유가 삭제분에 먹히는 순간 "다음 페이지가 있는데 없다"고 답한다 |
+| 서버 사이드 계측 방식 | **`Timer.builder(...).publishPercentileHistogram()` 명시 등록** (`@Timed` + `TimedAspect` 대신). 타이머는 `timeline.request` / `timeline.pull.query` 2종 | 히스토그램을 그 2종에만 켜기 위해서다. 전역 설정(`management.metrics.distribution.*`)으로 켜면 `http.server.requests`까지 버킷 시계열이 붙어 스크레이프 비용을 측정 중인 프로세스가 문다. AOP 프록시 한 겹을 측정 경로에서 빼는 효과도 있다 |
