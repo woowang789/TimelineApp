@@ -23,6 +23,14 @@ spring:
       host: 127.0.0.1
       port: 6379
 
+# bench 프로파일의 Prometheus가 호스트에서 실행 중인 앱의 /actuator/prometheus를 스크레이프한다(로드맵 0.12).
+# 노출은 필요한 것만 연다 — env·beans·heapdump까지 열면 측정과 무관한 공격면만 늘어난다.
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health, info, prometheus, metrics
+
 # nodb 프로파일(0.2)은 0.6에서 제거했다.
 # DataSource/JPA 자동구성을 빼는 방식이었는데, 가입 API가 UserRepository에 의존하는 빈을 들여오면서
 # "DB 없이 부팅"이 성립하지 않게 됐다(자동구성을 빼면 그 빈들이 만들어지지 못해 기동이 실패한다).

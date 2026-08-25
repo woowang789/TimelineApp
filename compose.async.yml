@@ -1,0 +1,73 @@
+# 타임라인 서비스 — async 오버레이 (Phase 3 · W13~)
+#
+# 실행
+#   docker compose -f compose.yml -f compose.async.yml up -d
+#
+# 메모리 합계 (마스터 §3 표)
+#   dev 3.5G (MySQL 2G + Redis 1.5G) + Kafka 1.2G = 4.7G · 모니터링 없음
+#
+# 모니터링을 넣지 않는 이유는 자리가 없어서다. §3 그대로 —
+#   "Phase 3에서 Kafka 자리를 만들려면 (모니터링을) 내리는 수밖에 없고,
+#    그때 fan-out 지연은 Actuator와 애플리케이션 로그로 계측한다."
+# bench 오버레이와 겹쳐 쓰지 않는다 (4.2G + 1.2G = 5.4G > Docker Desktop 할당 5GB).
+#
+# Kafka는 Phase 3(W13~)까지 쓰지 않는다. 그런데도 이 파일을 지금 만드는 이유는 하나다 —
+# **arm64(M1) 이미지 호환 문제를 Phase 3에서 처음 만나는 상황을 막기 위해서다**
+# (로드맵 §4.2, §6 리스크 표). 지금의 책임은 "뜬다"까지이고,
+# 토픽 · 파티션(§7.11 파티션 키 없음 + 500명 청크) · 컨슈머 설정은 Phase 3의 몫이다.
+
+services:
+  kafka:
+    # 이미지 선택: apache/kafka (Apache 공식). 이유 셋 —
+    #  1) KRaft 단일 노드(broker + controller 겸임)가 이미지 기본 구성이다. ZooKeeper 컨테이너가 필요 없다.
+    #  2) arm64 네이티브. `docker manifest inspect apache/kafka:3.9.1` → arm64 포함 확인.
+    #  3) bitnami/kafka는 2025년 Bitnami 카탈로그 정리 이후 docker.io/bitnami/kafka:latest가
+    #     더 이상 해석되지 않는다(no such manifest). 태그 수명이 불확실한 쪽을 고르지 않는다.
+    # 3.9.x로 고정한 이유: Spring Boot 3.5.x가 관리하는 kafka-clients가 3.9 계열이라
+    # Phase 3에서 브로커/클라이언트 버전 스큐를 만들지 않는다.
+    image: apache/kafka:3.9.1
+    # 컨테이너 메모리 상한 1.2G (§3 표)
+    mem_limit: 1200m
+    ports:
+      # 호스트에서 실행되는 앱(프로듀서/컨슈머)이 붙는 포트. 컨트롤러(9093)는 내부 전용이라 공개하지 않는다.
+      - "9092:9092"
+    environment:
+      # --- KRaft 단일 노드 ---
+      # 아래 값들은 이미지 기본 server.properties와 같지만, 명시해 둬야 "이 구성이 의도된 것"이 된다.
+      KAFKA_NODE_ID: "1"
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      # KRaft 클러스터 ID. 최초 기동 시 이 값으로 스토리지를 포맷한다(이미지 entrypoint가 수행).
+      # 재기동마다 값이 바뀌면 이미 포맷된 로그 디렉터리와 충돌하므로 고정한다.
+      CLUSTER_ID: 5L6g3nShT-eMCtK--X86sw
+      # --- 리스너 ---
+      # KAFKA_LISTENERS를 생략하면 이미지가 ADVERTISED에서 유도하는데, 그러면 CONTROLLER 리스너가
+      # 빠져 combined 모드가 뜨지 못한다. 두 값을 항상 같이 명시한다.
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      # 앱이 호스트에서 도는 구조라 광고 주소도 호스트 기준(localhost:9092)이어야 한다.
+      # 컨테이너 네트워크 안에서 kafka에 붙는 클라이언트는 없다 — 앱도 k6도 호스트 네이티브다(§3).
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+      # --- 단일 노드이므로 복제본을 둘 곳이 없다 ---
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
+      # --- 힙 ---
+      # kafka-server-start.sh의 기본값은 -Xmx1G -Xms1G다. 컨테이너 한도가 1.2G인데 힙만 1G면
+      # 메타스페이스 · 스레드 스택 · 다이렉트 버퍼를 더하는 순간 OOM kill 된다.
+      # Kafka는 로그를 페이지 캐시(=힙 밖)에 얹는 구조라 힙을 크게 잡을 이유도 없다 —
+      # 512m로 못 박고 나머지 ~700M을 페이지 캐시와 JVM 비힙 몫으로 남긴다.
+      KAFKA_HEAP_OPTS: -Xms512m -Xmx512m
+    healthcheck:
+      # 포트가 열렸는지만 본다. kafka-broker-api-versions.sh 같은 CLI 체크는 매 검사마다 JVM을
+      # 새로 띄워 1.2G 예산을 갉아먹고, 그 자체로 브로커를 OOM kill 시킬 수 있다.
+      test: ["CMD-SHELL", "nc -w 2 localhost 9092 < /dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    # 볼륨을 두지 않는다. MySQL과 달리 보존할 데이터가 없다 —
+    # fan-out 이벤트는 재기동 후 살아 있을 이유가 없고(멱등 연산이라 재발행으로 충분, §7.3),
+    # 볼륨에 남은 메타데이터와 CLUSTER_ID가 어긋나 기동이 막히는 사고만 생긴다.

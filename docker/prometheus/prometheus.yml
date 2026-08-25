@@ -1,0 +1,32 @@
+# bench 프로파일 전용 최소 스크레이프 설정 (로드맵 0.12)
+#
+# 측정 대상 앱은 컨테이너가 아니라 호스트에서 -Xmx1g로 직접 실행한다(마스터 §3).
+# 그래서 Prometheus 컨테이너 안에서 앱을 가리키려면 호스트를 이름으로 찾아야 하고,
+# Docker Desktop for Mac이 제공하는 host.docker.internal이 그 이름이다.
+# (compose.bench.yml의 extra_hosts: host-gateway로 한 번 더 못 박아 뒀다.)
+#
+# 여기서 하는 일은 "앱 메트릭이 수집된다"까지다. 대시보드·알럿·recording rule은 Phase 4′다.
+
+global:
+  # 기본값 15s → 10s.
+  # k6 시나리오 1회가 5분(§9.3)인데 15s 간격이면 표본이 20개뿐이라 구간별 변화를 못 읽는다.
+  # 반대로 5s 이하로 내리면 스크레이프 자체가 측정 대상 앱의 부하가 된다 — 10s가 그 사이다.
+  scrape_interval: 10s
+  # GC나 순간적인 지연으로 응답이 밀려도 스크레이프를 실패로 만들지 않을 만큼은 준다.
+  # 반드시 scrape_interval보다 작아야 한다.
+  scrape_timeout: 5s
+  # rule을 쓰지 않으므로 실질 의미는 없지만 scrape_interval과 어긋나지 않게 맞춰 둔다.
+  evaluation_interval: 10s
+
+scrape_configs:
+  - job_name: timeline-app
+    metrics_path: /actuator/prometheus
+    static_configs:
+      # 호스트에서 실행 중인 애플리케이션 (기본 8080).
+      - targets:
+          - host.docker.internal:8080
+        labels:
+          application: timeline
+
+  # Prometheus 자기 자신은 스크레이프하지 않는다.
+  # 측정 대상이 아닌 시계열은 0.4G 한도만 갉아먹는다.

@@ -1,0 +1,54 @@
+# 타임라인 서비스 — bench 오버레이 (측정할 때만 얹는다)
+#
+# 실행
+#   docker compose -f compose.yml -f compose.bench.yml up -d
+#
+# 메모리 합계 (마스터 §3 표)
+#   dev 3.5G (MySQL 2G + Redis 1.5G) + Prometheus 0.4G + Grafana 0.3G = 4.2G
+#   Docker Desktop 할당 5GB 안에 들어간다. 이 수치는 임의로 올리지 않는다 —
+#   호스트 M1 8GB라는 제약 자체가 성능 리포트의 조건이다.
+#
+# 이 오버레이는 dev 서비스(mysql/redis)를 건드리지 않는다. 두 컨테이너를 얹기만 한다.
+# 모니터링을 상시 구동하지 않는 이유는 §3 — Phase 3에서 Kafka 자리를 만들려면 내려야 하기 때문이다.
+# bench와 async를 동시에 얹지 않는다 (4.2G + Kafka 1.2G = 5.4G > 할당 5GB).
+#
+# arm64(M1) 호환 — 두 이미지 모두 multi-arch다. 확인 방법:
+#   docker manifest inspect prom/prometheus:v3.5.5  → arm64 포함
+#   docker manifest inspect grafana/grafana:13.1.4  → arm64 포함
+#   qemu 에뮬레이션 없이 네이티브로 뜬다 (에뮬레이션이면 측정 도구가 측정을 방해한다).
+
+services:
+  prometheus:
+    # v3.5는 Prometheus의 LTS 라인이다 — 패치만 올라오므로 측정 도구가 측정 기간 중에 바뀌지 않는다.
+    image: prom/prometheus:v3.5.5
+    # 컨테이너 메모리 상한 0.4G (§3 표)
+    mem_limit: 400m
+    ports:
+      - "9090:9090"
+    volumes:
+      # 스크레이프 설정을 저장소에 커밋한다 — 측정 조건도 재현 가능해야 한다(§9).
+      # 이미지 기본 CMD가 이미 이 경로를 --config.file로 읽으므로 command를 덮어쓰지 않는다.
+      - ./docker/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    extra_hosts:
+      # 측정 대상 앱은 호스트에서 직접 실행된다(§3). 컨테이너 안에서 호스트를 가리키는 이름이 필요하다.
+      # Docker Desktop for Mac은 host.docker.internal을 기본 제공하지만, 여기서 명시해 두면
+      # 다른 런타임(colima 등)으로 옮겨도 같은 이름이 유지된다.
+      - "host.docker.internal:host-gateway"
+
+  grafana:
+    image: grafana/grafana:13.1.4
+    # 컨테이너 메모리 상한 0.3G (§3 표)
+    mem_limit: 300m
+    ports:
+      - "3000:3000"
+    environment:
+      # 로컬 측정 전용이라 로그인 절차를 없앤다. 외부에 노출되지 않는다.
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+      # 측정 중 불필요한 아웃바운드 호출을 만들지 않는다.
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+    # 데이터소스 · 대시보드 프로비저닝은 여기서 하지 않는다.
+    # "Grafana 대시보드 구성"은 Phase 4′ 체크박스다(마스터 §8 Phase 4′ → docs/roadmap/50-phase-4-stabilize-document.md).
+    # 0.12의 책임은 "컨테이너가 §3의 메모리 상한 안에서 뜬다"까지다.
