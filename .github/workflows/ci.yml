@@ -1,0 +1,129 @@
+# 0.14 — GitHub Actions CI (로드맵 docs/roadmap/10-phase-0-foundation.md 0.14)
+#
+# 이 파이프라인이 책임지는 완료 조건은 둘이다.
+#   C1/C6 — push/PR마다 Testcontainers 통합 테스트를 돌려 "기능은 다 된다"를 상시 증명한다.
+#   C4    — bootJar 안에 dummy 소스셋 클래스가 없음을 자동 검증한다.
+# Phase 2b의 Pull==Push 동등성 검증(마스터 §9.4)이 편입될 자리도 여기다 (로드맵 4.8절).
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+# 테스트만 돌리므로 저장소 읽기 외의 권한은 필요 없다. 기본값을 최소로 좁혀 둔다.
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    # 로드맵 6절 리스크 "Testcontainers가 CI에서 느리거나 불안정" 대응.
+    # 스위트 목표는 5분 이내(0.13에서 로컬 소요 기록)다. 15분은 허용 예산이 아니라,
+    # 컨테이너 기동이 매달려 러너 시간을 태우는 상황을 끊기 위한 상한선이다.
+    timeout-minutes: 15
+
+    steps:
+      - name: 체크아웃
+        uses: actions/checkout@v4
+
+      - name: JDK 21 (Temurin) 설치
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      # Gradle 배포판·의존성 캐시를 이 액션이 자동 관리한다(setup-java의 cache: gradle 대신 사용).
+      # 캐시가 있어야 위 timeout-minutes가 현실적인 값이 된다 — 매 실행 의존성 재다운로드는
+      # Testcontainers 기동 시간과 합쳐져 예산을 그대로 잡아먹는다.
+      - name: Gradle 설정
+        uses: gradle/actions/setup-gradle@v4
+
+      # Testcontainers가 러너에 이미 떠 있는 Docker 데몬으로 MySQL 8.0 / Redis 7을 직접 띄운다.
+      # 그래서 services: 블록을 선언하지 않는다 — 선언해도 Testcontainers는 자기 컨테이너를
+      # 따로 띄우므로 중복 기동이 되고, 스키마 생성 경로가 Flyway 밖으로 이원화된다(로드맵 4.8절).
+      - name: 통합 테스트
+        run: ./gradlew test
+
+      # C4 자동화 — 로드맵 6절 리스크 "소스셋 격리가 조용히 깨짐(리팩터링 중 팩토리가 main으로 이동 등)".
+      # 백데이팅 팩토리가 배포 산출물에 들어가면 그게 곧 ID 위조 경로다(마스터 §4.2).
+      # 코드 리뷰로만 잡히던 상태를 CI가 잡게 만드는 것이 이 스텝의 존재 이유다.
+      #
+      # 검사 대상을 하드코딩하지 않는다. dummy 소스셋의 컴파일 출력물을 기준 목록으로 삼아
+      # bootJar 엔트리와 대조하므로, Phase 1에서 더미 데이터 생성기가 dummy 소스셋에 추가돼도
+      # 이 파일을 고치지 않고 자동으로 커버된다.
+      - name: bootJar 내 dummy 클래스 부재 검사 (C4)
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # compileDummyJava는 기준 목록을 만들기 위해 함께 돌린다.
+          # bootJar는 main만 보므로 dummy를 컴파일하지 않는다 — 그게 이 검사가 증명하려는 사실이기도 하다.
+          ./gradlew bootJar compileDummyJava
+
+          DUMMY_DIR="build/classes/java/dummy"
+          if [ ! -d "$DUMMY_DIR" ]; then
+            echo "::error::dummy 소스셋 출력 디렉토리가 없다 ($DUMMY_DIR). 격리 검사를 신뢰할 수 없다."
+            exit 1
+          fi
+
+          # 기준 목록 = dummy가 실제로 만들어 낸 클래스들의 소스셋 루트 기준 상대경로.
+          DUMMY_CLASSES="$(cd "$DUMMY_DIR" && find . -name '*.class' | sed 's|^\./||' | sort)"
+          if [ -z "$DUMMY_CLASSES" ]; then
+            # 목록이 비면 아래 대조가 "위반 없음"으로 조용히 통과해 버린다 — 검사 자체의 고장으로 본다.
+            echo "::error::dummy 소스셋 컴파일 출력물이 비어 있다 ($DUMMY_DIR). 격리 검사를 신뢰할 수 없다."
+            exit 1
+          fi
+
+          # 배포 산출물은 bootJar 하나다. plain jar(-plain.jar)는 대상이 아니다.
+          BOOT_JAR="$(find build/libs -maxdepth 1 -name '*.jar' ! -name '*-plain.jar')"
+          JAR_COUNT="$(printf '%s\n' "$BOOT_JAR" | grep -c . || true)"
+          if [ "$JAR_COUNT" != "1" ]; then
+            echo "::error::bootJar 산출물이 정확히 1개가 아니다 (발견 ${JAR_COUNT}개). 검사를 진행할 수 없다."
+            printf '%s\n' "$BOOT_JAR"
+            exit 1
+          fi
+
+          # unzip -l 목록에서 마지막 필드가 엔트리 경로다 (클래스 경로에는 공백이 없다).
+          JAR_ENTRIES="$(unzip -l "$BOOT_JAR" | awk '{ print $NF }')"
+
+          FAILED=0
+
+          # (1) 동적 대조 — dummy 출력물의 모든 클래스가 bootJar에 없어야 한다.
+          #     bootJar는 애플리케이션 클래스를 BOOT-INF/classes/ 아래에 넣는다.
+          #     grep -F는 중첩 클래스 이름의 '$'가 정규식으로 해석되는 것을 막는다.
+          #     "매치 없음"이 정상이고 그때 grep 종료코드가 1이므로, 반드시 if 조건 안에서만 호출한다
+          #     (set -e 아래에서 조건문 밖 grep은 정상 케이스에 스크립트를 죽인다).
+          while IFS= read -r cls; do
+            [ -n "$cls" ] || continue
+            if printf '%s\n' "$JAR_ENTRIES" | grep -qF "BOOT-INF/classes/$cls"; then
+              echo "::error::dummy 소스셋 클래스가 bootJar에 포함됐다: BOOT-INF/classes/$cls"
+              FAILED=1
+            fi
+          done <<DUMMY_CLASS_LIST
+          $DUMMY_CLASSES
+          DUMMY_CLASS_LIST
+
+          # (2) 고정 안전망 — 팩토리가 main으로 옮겨가면 (1)의 기준 목록에서 그 클래스가 사라져
+          #     동적 대조만으로는 위반을 놓친다. 이름으로 한 번 더 본다(패키지 경로가 바뀌어도 걸린다).
+          if printf '%s\n' "$JAR_ENTRIES" | grep -qF 'SnowflakeIdFactory'; then
+            echo "::error::백데이팅 팩토리(SnowflakeIdFactory)가 bootJar에 포함됐다 — 소스셋 격리가 깨졌다 (마스터 §4.2)."
+            FAILED=1
+          fi
+
+          if [ "$FAILED" -ne 0 ]; then
+            echo "배포 산출물에서 dummy 소스셋이 격리되지 않았다. build.gradle.kts의 소스셋 구성을 확인하라."
+            exit 1
+          fi
+
+          echo "OK — ${BOOT_JAR}에 dummy 클래스 없음 (대조한 클래스 $(printf '%s\n' "$DUMMY_CLASSES" | wc -l | tr -d ' ')개)"
+
+      # 실패한 실행만 리포트를 남긴다. 로컬 재현 전에 어떤 테스트가 왜 깨졌는지 볼 수 있어야 한다.
+      - name: 테스트 리포트 업로드
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: |
+            build/reports/tests/test
+            build/test-results/test

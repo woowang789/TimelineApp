@@ -1,4 +1,4 @@
-<!-- CI 뱃지: 0.14에서 추가 -->
+[![CI](https://github.com/woowang789/TimelineApp/actions/workflows/ci.yml/badge.svg)](https://github.com/woowang789/TimelineApp/actions/workflows/ci.yml)
 
 # 타임라인 서비스
 
