@@ -1,0 +1,76 @@
+# 타임라인 서비스 — 로컬 인프라 (dev 프로파일)
+#
+# 프로파일 3종 (마스터 §3, 로드맵 10-phase-0-foundation §4.2)
+# 메모리 수치는 §3 표 그대로다. 임의로 올리지 않는다 — 호스트가 M1 8GB / Docker Desktop 할당 5GB라는 게
+# 전체 설계의 전제이고, 이 제약 자체가 성능 리포트의 조건이 된다.
+#
+#   compose.yml               dev    MySQL 2G + Redis 1.5G                        합 3.5G  (이 파일)
+#   + compose.bench.yml       bench  dev + Prometheus 0.4G + Grafana 0.3G         합 4.2G  (작업 0.12에서 추가)
+#   + compose.async.yml       async  MySQL 2G + Redis 1.5G + Kafka 1.2G, 모니터링 off  합 4.7G  (작업 0.12에서 추가)
+#
+# 실행
+#   docker compose up -d                                          # dev
+#   docker compose -f compose.yml -f compose.bench.yml up -d      # bench  (0.12 이후)
+#   docker compose -f compose.yml -f compose.async.yml up -d      # async  (0.12 이후)
+#
+# 애플리케이션과 k6는 컨테이너에 넣지 않는다 — 둘 다 호스트에서 직접 실행한다 (앱은 -Xmx1g).
+# 컨테이너에 넣으면 측정 대상(앱)과 측정 도구(k6)가 DB/Redis와 같은 메모리 예산을 나눠 쓰게 된다.
+
+services:
+  mysql:
+    # mysql:8.0 은 8.0.28+ 부터 arm64 네이티브 이미지를 제공한다 (M1에서 emulation 불필요)
+    image: mysql:8.0
+    # 컨테이너 메모리 상한 2G (§3 표)
+    mem_limit: 2g
+    ports:
+      - "3306:3306"
+    environment:
+      MYSQL_DATABASE: timeline
+      # 로컬 개발 전용 자격증명이다. 운영에 쓰이지 않으므로 평문으로 둔다.
+      MYSQL_USER: timeline
+      MYSQL_PASSWORD: timeline
+      MYSQL_ROOT_PASSWORD: root
+    volumes:
+      # named volume 으로 데이터를 컨테이너 밖에 둔다.
+      # Phase 1에서 더미 데이터(사용자 10만/팔로우 300만/게시글 300만)를 매 측정마다 다시 만들 수는 없다.
+      # 측정 전 스냅샷 복원(마스터 §9.3)이 이 볼륨을 덤프/복구하는 방식으로 이뤄진다.
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    # innodb_buffer_pool_size 는 여기서 설정하지 않는다.
+    # Phase 1 인계 항목(마스터 §8 Phase 1 체크박스, 로드맵 §4.2) — 기본값 상태의 Pull 성능을 먼저 측정하고
+    # 그 다음에 1G로 올린다. Phase 0에서 미리 튜닝하면 M0/M1 비교의 기준선이 사라진다.
+
+  redis:
+    image: redis:7
+    # 컨테이너 메모리 상한 1.5G. Redis 자체의 maxmemory(1G)와는 다른 값이다 —
+    # 1G는 데이터 상한이고, 나머지 0.5G는 복제 버퍼·클라이언트 버퍼·단편화 여유분이다.
+    # 두 값을 같게 두면 maxmemory 도달 전에 컨테이너가 OOM kill 된다.
+    mem_limit: 1536m
+    ports:
+      - "6379:6379"
+    # --save "" : RDB 스냅샷을 끈다. 타임라인 캐시는 post_id 목록일 뿐이고,
+    # 키가 없으면 Pull 폴백으로 복구되도록 설계했으므로(마스터 §5-7) persistence가 필요 없다.
+    # 오히려 fork 기반 스냅샷이 측정 중 latency spike를 만들어 측정을 오염시킨다.
+    # --maxmemory 1gb + allkeys-lru : 메모리가 차면 오래 안 쓴 타임라인부터 축출된다.
+    # 이 축출 동작 자체가 §11에서 실측으로 답할 실험 대상이다 (마스터 §5-5).
+    command:
+      - redis-server
+      - --maxmemory
+      - 1gb
+      - --maxmemory-policy
+      - allkeys-lru
+      - --save
+      - ""
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  mysql-data:
