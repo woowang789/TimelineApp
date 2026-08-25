@@ -21,6 +21,14 @@ public enum ErrorCode {
 	/** 인증 없이 보호 경로에 접근. {@code JwtAuthenticationEntryPoint}가 쓴다. */
 	UNAUTHORIZED(HttpStatus.UNAUTHORIZED, "인증이 필요합니다."),
 	DUPLICATE_USERNAME(HttpStatus.CONFLICT, "이미 사용 중인 username입니다."),
+	USER_NOT_FOUND(HttpStatus.NOT_FOUND, "사용자를 찾을 수 없습니다."),
+	/**
+	 * 자기 자신을 대상으로 한 follow/unfollow. 가입 시 삽입되는 self-follow 행(&sect;4.3)은
+	 * <strong>시스템 불변식</strong>이라 API로 만들거나 지울 수 없다(부록 B 확정).
+	 */
+	SELF_FOLLOW_FORBIDDEN(HttpStatus.BAD_REQUEST, "자기 자신은 팔로우할 수 없습니다."),
+	DUPLICATE_FOLLOW(HttpStatus.CONFLICT, "이미 팔로우한 사용자입니다."),
+	FOLLOW_NOT_FOUND(HttpStatus.NOT_FOUND, "팔로우하지 않은 사용자입니다."),
 	INTERNAL_ERROR(HttpStatus.INTERNAL_SERVER_ERROR, "서버 내부 오류가 발생했습니다.");
 
 	private final HttpStatus status;
