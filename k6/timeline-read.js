@@ -24,6 +24,7 @@
 import http from 'k6/http';
 import exec from 'k6/execution';
 import { check, fail } from 'k6';
+import { SharedArray } from 'k6/data';
 
 // setup()의 로그인 요청이 섞이지 않은 타임라인 전용 하위 메트릭 이름.
 const TIMELINE_DURATION = 'http_req_duration{endpoint:timeline}';
@@ -64,20 +65,30 @@ const SLO_START_TIME = '2m';
 // open()은 init 컨텍스트에서만 호출할 수 있고 경로는 **스크립트 파일 기준**이다(CWD와 무관).
 // 파일이 아직 없어도 init에서 터지지 않게 감싼다 — 그래야 `k6 inspect`로 구조 검증이 가능하고,
 // 진짜 실패는 setup()에서 사람이 읽을 수 있는 문장으로 낸다.
-let COHORT_USERS = [];
+//
+// SharedArray를 쓰는 이유 (M1 heavy 측정에서 실측으로 배운 것):
+// init 컨텍스트는 **VU마다** 실행된다. 평범한 배열이면 VU 수만큼 파일 파싱과 사본이 생기고,
+// (1) VU 스핀업이 느려져 arrival-rate가 붕괴 구간에서 VU를 못 늘려 dropped가 나거나
+// (2) 이를 피하려 preAllocatedVUs를 크게 잡으면 k6 메모리가 수백 MB로 부풀어
+//     8GB 호스트에서 mysqld가 스왑으로 밀리며 warm 조건 자체가 깨진다(2 RPS부터 p50 수십 초 — 실측).
+// SharedArray는 프로세스에 1부만 두고 전 VU가 공유한다.
 let COHORT_ERROR = null;
-try {
-	const parsed = JSON.parse(open('./data/cohorts.json'));
-	COHORT_USERS = parsed[COHORT];
-	if (!Array.isArray(COHORT_USERS) || COHORT_USERS.length === 0) {
-		COHORT_ERROR =
-			`k6/data/cohorts.json에 '${COHORT}' 코호트가 없거나 비어 있다. ` +
-			`(가능한 키: ${Object.keys(parsed).join(', ')})`;
-		COHORT_USERS = [];
+const COHORT_USERS = new SharedArray('cohort-users', function () {
+	try {
+		const parsed = JSON.parse(open('./data/cohorts.json'));
+		const users = parsed[COHORT];
+		if (!Array.isArray(users) || users.length === 0) {
+			COHORT_ERROR =
+				`k6/data/cohorts.json에 '${COHORT}' 코호트가 없거나 비어 있다. ` +
+				`(가능한 키: ${Object.keys(parsed).join(', ')})`;
+			return [];
+		}
+		return users;
+	} catch (e) {
+		COHORT_ERROR = `k6/data/cohorts.json을 읽지 못했다: ${e.message} — make seed로 코호트를 export했는지 확인한다.`;
+		return [];
 	}
-} catch (e) {
-	COHORT_ERROR = `k6/data/cohorts.json을 읽지 못했다: ${e.message} — make seed로 코호트를 export했는지 확인한다.`;
-}
+});
 
 // ── options ──────────────────────────────────────────────────────────────────────
 export const options = {
@@ -132,8 +143,10 @@ export const options = {
  * 호스트가 M1 8GB이므로 dropped_iterations를 못 잡겠다고 MAX_VUS를 무한정 올리지 않는다.
  */
 export function setup() {
-	if (COHORT_ERROR) {
-		fail(COHORT_ERROR);
+	// SharedArray 콜백은 첫 접근 시점에 실행되므로 length를 먼저 읽어 실체화한다 —
+	// 그래야 COHORT_ERROR도 채워진 뒤다. (빈 배열이면 어떤 이유든 측정을 시작하면 안 된다.)
+	if (COHORT_USERS.length === 0) {
+		fail(COHORT_ERROR || `코호트 '${COHORT}'가 비어 있다.`);
 	}
 
 	const requests = COHORT_USERS.map((u) => ({

@@ -1,0 +1,27 @@
+# 실행 조건 (scripts/bench.sh)
+지점              : m1
+코호트            : light
+런번호            : 1
+시나리오          : saturation
+시작 시각         : 2026-08-26 03:38:27 +0900
+스냅샷 복원       : yes
+앱 기동 완료      : 2026-08-26 03:38:27 +0900  (buffer pool cold — 이 시점부터 k6가 데운다)
+BASE_URL          : http://localhost:8080
+RATES(ENV)        : 10,25,50,100,150
+RATE(ENV)         : 미지정
+DURATION(ENV)     : 미지정
+PRE_ALLOCATED_VUS : 600
+MAX_VUS           : 미지정
+
+# 도구 버전
+k6                : k6 v2.2.0 (commit/devel, go1.26.5, darwin/arm64)
+java              : openjdk version "21.0.12" 2026-07-21
+docker compose    : 5.3.1
+host              : Darwin arm64 / 8코어
+cold 참고치       : 0.080758s 0.016227s 0.007783s  (light 대표 user_003001 3회)
+워밍업            : posts 풀스캔 + fk_posts_author 인덱스 스캔 + follows 풀스캔 + API 30회
+warm 단건         : 0.010171s (워밍업 직후 동일 사용자)
+
+종료 시각         : 2026-08-26 03:44:06 +0900
+k6 종료 코드      : 99
+run 사이 휴지: 3분

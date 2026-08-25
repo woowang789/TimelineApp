@@ -305,10 +305,15 @@ log "   cold 참고치($COHORT 대표 1명 3회):$COLD_TIMES"
 # 코호트 전원을 API로 순회하는 워밍(실트래픽 형태)은 cold 쿼리 1,000개 = 수십 분이라 비현실적이고,
 # 순차 풀스캔은 같은 페이지 집합을 수십 초에 올린다. 워밍 방법 자체도 조건이므로 meta에 기록한다.
 WARMUP_STARTED="$(date '+%H:%M:%S')"
+# 두 번째 쿼리는 posts 의 보조 인덱스 페이지를 데운다. 인덱스 이름을 박지 않는 이유:
+# M0 는 fk_posts_author, M1 은 idx_posts_author_deleted_id_desc 로 지점마다 이름이 다르고
+# (V2 적용 시 InnoDB 가 fk_posts_author 를 자동 제거 — V2 주석), FORCE INDEX 로 이름을 박으면
+# 없는 지점에서 ERROR 1176 으로 워밍업이 깨진다(실측). author_id 조건이면 어느 지점에서든
+# 옵티마이저가 author_id 선행 보조 인덱스를 스캔한다.
 docker compose "${COMPOSE_FILES[@]}" exec -T -e MYSQL_PWD=timeline mysql \
 	mysql -utimeline -N -B timeline -e "
 	SELECT COUNT(*), AVG(like_count) FROM posts;
-	SELECT COUNT(*) FROM posts FORCE INDEX(fk_posts_author) WHERE author_id > 0;
+	SELECT COUNT(*) FROM posts WHERE author_id > 0 AND is_deleted = false;
 	SELECT COUNT(*) FROM follows;" >/dev/null
 # JVM/JIT·커넥션 풀 워밍 — 코호트 대표 요청을 직렬로 소량(데이터는 이미 위에서 데워져 빠르다).
 for i in $(seq 1 30); do

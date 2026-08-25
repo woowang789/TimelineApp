@@ -93,12 +93,12 @@ db-restore:
 # -------------------------------------------------------------------------------------
 
 bench-m0:
-	@test -x scripts/bench.sh || { echo "scripts/bench.sh 가 없거나 실행 권한이 없다."; exit 1; }
-	scripts/bench.sh m0
+	@test -x scripts/bench-matrix.sh || { echo "scripts/bench-matrix.sh 가 없거나 실행 권한이 없다."; exit 1; }
+	scripts/bench-matrix.sh m0
 
 bench-m1:
-	@test -x scripts/bench.sh || { echo "scripts/bench.sh 가 없거나 실행 권한이 없다."; exit 1; }
-	scripts/bench.sh m1
+	@test -x scripts/bench-matrix.sh || { echo "scripts/bench-matrix.sh 가 없거나 실행 권한이 없다."; exit 1; }
+	scripts/bench-matrix.sh m1
 
 # -------------------------------------------------------------------------------------
 # 보조
